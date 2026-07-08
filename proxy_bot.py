@@ -24,34 +24,25 @@ def fmt_time(ts):
         return ""
     return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%H:%M UTC")
 
-STATUS_CHANNEL_ID = os.environ.get("STATUS_CHANNEL_ID")
-
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-async def update_channel_name(state):
-    if not STATUS_CHANNEL_ID:
-        return
-    channel = bot.get_channel(int(STATUS_CHANNEL_ID))
-    if channel is None:
-        return
+async def update_status(state):
     if state["locked_by"]:
-        safe_name = state["locked_by"].lower().replace(" ", "-")
-        new_name = f"🔴proxy-{safe_name}"
+        text = f"🔴 claimed by {state['locked_by']}"
     else:
-        new_name = "🟢proxy-free"
+        text = "🟢 proxy free"
     try:
-        if channel.name != new_name:
-            await channel.edit(name=new_name)
+        await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=text))
     except discord.HTTPException as e:
-        print(f"Could not rename channel (likely rate limited): {e}")
+        print(f"Could not update presence: {e}")
 
 @bot.event
 async def on_ready():
     await bot.tree.sync()
     print(f"Logged in as {bot.user}")
     state = load_state()
-    await update_channel_name(state)
+    await update_status(state)
 
 @bot.tree.command(name="claim", description="Claim the shared proxy so others know it's in use")
 async def claim(interaction: discord.Interaction):
@@ -72,12 +63,12 @@ async def claim(interaction: discord.Interaction):
     state["log"].append({"name": user, "action": "claim", "ts": time.time()})
     state["log"] = state["log"][-20:]
     save_state(state)
-    await update_channel_name(state)
 
     await interaction.response.send_message(
         f"🔒 **{user}** claimed the proxy at {fmt_time(state['locked_at'])}. "
         f"Release it with `/release` when you're done."
     )
+    bot.loop.create_task(update_status(state))
 
 @bot.tree.command(name="release", description="Release the shared proxy so someone else can use it")
 async def release(interaction: discord.Interaction):
@@ -93,9 +84,9 @@ async def release(interaction: discord.Interaction):
     state["locked_by"] = None
     state["locked_at"] = None
     save_state(state)
-    await update_channel_name(state)
 
     await interaction.response.send_message(f"🟢 **{user}** released the proxy. It's free to use.")
+    bot.loop.create_task(update_status(state))
 
 @bot.tree.command(name="status", description="Check who currently has the proxy")
 async def status(interaction: discord.Interaction):
@@ -117,7 +108,6 @@ async def force_release(interaction: discord.Interaction):
     state["locked_by"] = None
     state["locked_at"] = None
     save_state(state)
-    await update_channel_name(state)
 
     if prev:
         await interaction.response.send_message(
@@ -125,6 +115,7 @@ async def force_release(interaction: discord.Interaction):
         )
     else:
         await interaction.response.send_message("Proxy was already free.", ephemeral=True)
+    bot.loop.create_task(update_status(state))
 
 TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
 if not TOKEN:
