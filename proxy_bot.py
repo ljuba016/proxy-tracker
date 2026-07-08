@@ -24,13 +24,34 @@ def fmt_time(ts):
         return ""
     return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%H:%M UTC")
 
+STATUS_CHANNEL_ID = os.environ.get("STATUS_CHANNEL_ID")
+
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
+
+async def update_channel_name(state):
+    if not STATUS_CHANNEL_ID:
+        return
+    channel = bot.get_channel(int(STATUS_CHANNEL_ID))
+    if channel is None:
+        return
+    if state["locked_by"]:
+        safe_name = state["locked_by"].lower().replace(" ", "-")
+        new_name = f"🔴proxy-{safe_name}"
+    else:
+        new_name = "🟢proxy-free"
+    try:
+        if channel.name != new_name:
+            await channel.edit(name=new_name)
+    except discord.HTTPException as e:
+        print(f"Could not rename channel (likely rate limited): {e}")
 
 @bot.event
 async def on_ready():
     await bot.tree.sync()
     print(f"Logged in as {bot.user}")
+    state = load_state()
+    await update_channel_name(state)
 
 @bot.tree.command(name="claim", description="Claim the shared proxy so others know it's in use")
 async def claim(interaction: discord.Interaction):
@@ -51,6 +72,7 @@ async def claim(interaction: discord.Interaction):
     state["log"].append({"name": user, "action": "claim", "ts": time.time()})
     state["log"] = state["log"][-20:]
     save_state(state)
+    await update_channel_name(state)
 
     await interaction.response.send_message(
         f"🔒 **{user}** claimed the proxy at {fmt_time(state['locked_at'])}. "
@@ -71,6 +93,7 @@ async def release(interaction: discord.Interaction):
     state["locked_by"] = None
     state["locked_at"] = None
     save_state(state)
+    await update_channel_name(state)
 
     await interaction.response.send_message(f"🟢 **{user}** released the proxy. It's free to use.")
 
@@ -94,6 +117,7 @@ async def force_release(interaction: discord.Interaction):
     state["locked_by"] = None
     state["locked_at"] = None
     save_state(state)
+    await update_channel_name(state)
 
     if prev:
         await interaction.response.send_message(
